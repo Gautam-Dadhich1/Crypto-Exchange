@@ -1,17 +1,33 @@
-#include "secrets.h"
+#include <websocketpp/config/asio_no_tls.hpp>
+#include <websocketpp/server.hpp>
+
 #include <iostream>
 #include <string>
+#include <map>
+#include <set>
+#include <nlohmann/json.hpp>
 #include <curl/curl.h>
-#include "json.hpp"
 
 using json = nlohmann::json;
 using namespace std;
+using namespace std::placeholders;
+using websocketpp::connection_hdl;
+
+typedef websocketpp::server<websocketpp::config::asio> websocket_server;
 
 size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp)
 {
     ((std::string *)userp)->append((char *)contents, size * nmemb);
     return size * nmemb;
 }
+
+struct connection_comparator
+{
+    bool operator()(const connection_hdl &h1, const connection_hdl &h2) const
+    {
+        return !h1.owner_before(h2) && !h2.owner_before(h1);
+    }
+};
 
 class RestClient
 {
@@ -110,107 +126,9 @@ public:
         return json::parse(readBuffer);
     }
 
-    json buy(const json &buy_obj)
-    {
-        std::string queryParams;
-        for (auto it = buy_obj.begin(); it != buy_obj.end(); ++it)
-        {
-            if (it != buy_obj.begin())
-            {
-                queryParams += "&";
-            }
-
-            // If the value is a string, get it directly without quotes
-            if (it->is_string())
-            {
-                queryParams += it.key() + "=" + it->get<std::string>();
-            }
-            else
-            {
-                queryParams += it.key() + "=" + it->dump();
-            }
-        }
-        return makeRequest("/api/v2/private/buy", "GET", queryParams);
-    }
-
-    json modifyOrder(const json &orderParams)
-    {
-        std::string queryParams;
-        for (auto it = orderParams.begin(); it != orderParams.end(); ++it)
-        {
-            if (it != orderParams.begin())
-            {
-                queryParams += "&";
-            }
-
-            // If the value is a string, get it directly without quotes
-            if (it->is_string())
-            {
-                queryParams += it.key() + "=" + it->get<std::string>();
-            }
-            else
-            {
-                queryParams += it.key() + "=" + it->dump();
-            }
-        }
-        return makeRequest("/api/v2/private/edit", "GET", queryParams);
-    }
-
-    json placeOrder(const json &buy_obj)
-    {
-        return makeRequest("/api/v2/private/buy", "GET", buy_obj.dump());
-    }
-
-    json cancelOrder(const std::string &order_id)
-    {
-        return makeRequest("/api/v2/private/cancel?order_id=" + order_id);
-    }
-
     json getOrderBook(const std::string &instrument_name, int depth = 5)
     {
         return makeRequest("/api/v2/public/get_order_book?instrument_name=" + instrument_name + "&depth=" + std::to_string(depth));
-    }
-
-    json getPositions(const json &positionParams)
-    {
-        return makeRequest("/api/v2/private/get_positions", "GET", positionParams.dump());
-    }
-
-    void executeAllFunctions()
-    {
-        // Example calls
-        // // Place an order
-        // json buy_obj = {
-        //     {"amount", 70},
-        //     {"instrument_name", "ADA_USDC-PERPETUAL"},
-        //     {"label", "market0000567"},
-        //     {"type", "market"}};
-        // json response_buy = buy(buy_obj);
-        // std::cout << "Order placed: " << response_buy.dump(4) << std::endl;
-
-        // Modify an order
-        // json modifyParams = {
-        //     {"amount", 101},
-        //     {"order_id", "USDC-13386813264"},
-        //     {"price", 0.12}};
-        // json response_modify = modifyOrder(modifyParams);
-        // std::cout << "Order modified: " << response_modify.dump(4) << std::endl;
-
-        // // Cancel an order
-        // std::string order_id = "USDC-13386813264";
-        // json response_cancel = cancelOrder(order_id);
-        // std::cout << "Order canceled: " << response_cancel.dump(4) << std::endl;
-
-        // // Get order book
-        // json response_orderbook = getOrderBook("BTC-PERPETUAL", 5);
-        // std::cout << "Order Book: " << response_orderbook.dump(4) << std::endl;
-
-        // // Get positions
-        // json positionParams = {
-        //     {"currency", "BTC"},
-        //     {"kind", "future"}};
-        // json response_position = getPositions(positionParams);
-        // std::cout << "Positions: " << response_position.dump(4) << std::endl;
     }
 
 public:
@@ -220,15 +138,95 @@ public:
     std::string token;
 };
 
-int main()
+class OrderBookServer
 {
-    RestClient client(CLIENT_ID, CLIENT_SECRET, "https://test.deribit.com");
-
-    if (client.authenticate())
+public:
+    OrderBookServer() : m_server()
     {
-        // Call the function to execute all API interactions
-        client.executeAllFunctions();
+        m_server.init_asio();
+        m_server.set_open_handler(bind(&OrderBookServer::on_open, this, _1));
+        m_server.set_close_handler(bind(&OrderBookServer::on_close, this, _1));
+        m_server.set_message_handler(bind(&OrderBookServer::on_message, this, _1, _2));
     }
 
+    void on_open(connection_hdl hdl)
+    {
+        m_connections.insert(hdl);
+    }
+
+    void on_close(connection_hdl hdl)
+    {
+        m_connections.erase(hdl);
+        for (auto &subscription : m_subscriptions)
+        {
+            subscription.second.erase(hdl);
+        }
+    }
+
+    void on_message(connection_hdl hdl, websocket_server::message_ptr msg)
+    {
+        json message = json::parse(msg->get_payload());
+        string type = message["type"];
+        string symbol = message["symbol"];
+
+        if (type == "subscribe")
+        {
+            m_subscriptions[symbol].insert(hdl);
+            cout << "Client subscribed to: " << symbol << endl;
+        }
+        else if (type == "unsubscribe")
+        {
+            m_subscriptions[symbol].erase(hdl);
+            cout << "Client unsubscribed from: " << symbol << endl;
+        }
+    }
+
+    void run(uint16_t port)
+    {
+        m_server.listen(port);
+        m_server.start_accept();
+        m_server.run();
+    }
+
+    void send_order_book_update(const string &symbol, const json &update)
+    {
+        auto it = m_subscriptions.find(symbol);
+        if (it != m_subscriptions.end())
+        {
+            string message = update.dump();
+            for (auto hdl : it->second)
+            {
+                m_server.send(hdl, message, websocketpp::frame::opcode::text);
+            }
+        }
+    }
+
+private:
+    websocket_server m_server;
+    set<connection_hdl, connection_comparator> m_connections;
+    map<string, set<connection_hdl, connection_comparator>> m_subscriptions;
+};
+
+int main()
+{
+    OrderBookServer server;
+    thread server_thread([&server]()
+                         { server.run(9002); });
+
+    string clientId = "P6TGQTrl";
+    string clientSecret = "-_rbnZQOEqNpTuUqRbpY4uOnCKmmwvtYuqT3XYfJ4aA";
+    RestClient client(clientId, clientSecret, "https://test.deribit.com");
+
+    while (true)
+    {
+        this_thread::sleep_for(chrono::seconds(3));
+        if (client.authenticate())
+        {
+            json order_book_update = client.getOrderBook("BTC-PERPETUAL", 5);
+            server.send_order_book_update("BTC_USD", order_book_update);
+        }
+    }
+
+    server_thread.join();
     return 0;
 }

@@ -15,7 +15,6 @@ void placeOrder() {
     cout << "Enter type (e.g., market, limit): ";
     cin >> type;
 
-    // Example output, replace with your API call
     cout << "Placed order for " << amount << " of " << instrument_name << " with label " << label << " and type " << type << "...\n" << endl << endl << endl << endl << endl;
 }
 
@@ -25,7 +24,6 @@ void cancelOrder() {
     cout << "Enter order ID to cancel (e.g., USDC-123456789): ";
     cin >> order_id;
 
-    // Example output, replace with your API call
     cout << "Canceled order with ID " << order_id << "...\n" << endl << endl << endl << endl << endl;
 }
 
@@ -41,7 +39,6 @@ void modifyOrder() {
     cout << "Enter new price (e.g., 25000.50): ";
     cin >> price;
 
-    // Example output, replace with your API call
     cout << "Modified order " << order_id << " to new amount " << amount << " and price " << price << "...\n" << endl << endl << endl << endl << endl;
 }
 
@@ -54,7 +51,6 @@ void getOrderbook() {
     cout << "Enter depth (number of levels, e.g., 5, 10): ";
     cin >> depth;
 
-    // Example output, replace with your API call
     cout << "Fetched orderbook for " << instrument_name << " with depth " << depth << "...\n" << endl << endl << endl << endl << endl;
 }
 
@@ -66,7 +62,6 @@ void viewCurrentPositions() {
     cout << "Enter kind (e.g., future, option): ";
     cin >> kind;
 
-    // Example output, replace with your API call
     cout << "Viewing positions for " << currency << " with kind " << kind << "...\n" << endl << endl << endl << endl << endl;
 }
 

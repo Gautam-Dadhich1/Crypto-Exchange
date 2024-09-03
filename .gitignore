@@ -1,0 +1,25 @@
+# Ignore secret.h
+secret.h
+
+# Ignore compiled binary files
+RestClient
+
+# Ignore object files and other temporary files
+*.o
+*.obj
+*.exe
+*.out
+*.log
+
+# Ignore build directories
+/build/
+/bin/
+/Debug/
+/Release/
+
+# Ignore IDE-specific files (example for Visual Studio Code)
+.vscode/
+*.code-workspace
+
+# Ignore macOS-specific files
+.DS_Store
